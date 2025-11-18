@@ -1,0 +1,103 @@
+# Baseline Configuration for Virtual IHC Staining
+# Version: 0.1
+# Date: 2025-11-17
+
+experiment:
+  name: "virtual_ihc_v0.1"
+  description: "Baseline latent diffusion model for H&E to IHC translation"
+  seed: 42
+
+data:
+  root_dir: "/orcd/home/002/tomli/orcd/scratch/data/bci"
+  train_dir: "train"
+  test_dir: "test"
+  he_subdir: "HE"
+  ihc_subdir: "IHC"
+  image_size: 256  # Start small for rapid iteration
+  batch_size: 8
+  num_workers: 4
+  cache_rate: 1.0  # Cache entire dataset in RAM (MONAI feature)
+
+model:
+  type: "latent_diffusion"
+
+  # VAE/AutoencoderKL
+  autoencoder:
+    spatial_dims: 2
+    in_channels: 3
+    out_channels: 3
+    channels: [128, 256, 512]
+    latent_channels: 4
+    num_res_blocks: 2
+    attention_levels: [False, True, True]
+
+  # Diffusion UNet
+  unet:
+    spatial_dims: 2
+    in_channels: 8  # 4 (latent) + 4 (condition)
+    out_channels: 4
+    channels: [128, 256, 512, 512]
+    attention_levels: [False, True, True, True]
+    num_head_channels: 32
+    num_res_blocks: 2
+
+  # Diffusion scheduler
+  scheduler:
+    type: "DDIM"
+    num_train_timesteps: 1000
+    schedule: "scaled_linear_beta"
+    beta_start: 0.0015
+    beta_end: 0.0195
+    clip_sample: False
+
+  # Conditioning
+  conditioning:
+    use_classifier_free_guidance: True
+    guidance_scale: 7.5
+    unconditional_prob: 0.1  # 10% unconditional training
+
+training:
+  num_epochs: 100
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  optimizer: "AdamW"
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: 100
+    eta_min: 1e-6
+
+  # Loss
+  loss:
+    type: "MSE"  # On noise prediction
+
+  # Checkpointing
+  save_interval: 5  # Save every 5 epochs
+  save_top_k: 3
+  monitor: "val_loss"
+
+  # Logging
+  log_interval: 50  # Log every 50 iterations
+  val_interval: 1  # Validate every epoch
+
+  # Mixed precision
+  use_amp: True
+
+  # Gradient clipping
+  gradient_clip_val: 1.0
+
+evaluation:
+  metrics:
+    - "PSNR"
+    - "SSIM"
+  num_samples: 10  # Number of images to generate for visual inspection
+  inference_steps: 50  # DDIM sampling steps
+
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  output_dir: "outputs"
+
+hardware:
+  device: "cuda"
+  num_gpus: 1
+  distributed: False
