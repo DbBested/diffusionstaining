@@ -1,0 +1,93 @@
+# CPU Tiny Configuration - Ultra-fast validation
+# Version: 0.1-cpu-tiny
+# Date: 2025-11-17
+
+experiment:
+  name: "virtual_ihc_cpu_tiny"
+  description: "Ultra-small test on CPU to validate pipeline"
+  seed: 42
+
+data:
+  root_dir: "/orcd/home/002/tomli/orcd/scratch/data/virtual_staining_prepared"
+  train_dir: "train"
+  test_dir: "test"
+  he_subdir: "unstained"
+  ihc_subdir: "stained"
+  image_size: 64  # Very small for CPU
+  batch_size: 1
+  num_workers: 0
+  cache_rate: 0.0
+
+model:
+  type: "latent_diffusion"
+
+  autoencoder:
+    spatial_dims: 2
+    in_channels: 3
+    out_channels: 3
+    channels: [32, 64]  # Tiny model
+    latent_channels: 2
+    num_res_blocks: 1
+    attention_levels: [False, False]  # No attention to save time
+
+  unet:
+    spatial_dims: 2
+    in_channels: 4  # 2 (latent) + 2 (condition)
+    out_channels: 2
+    channels: [32, 64, 128]  # Small model
+    attention_levels: [False, False, False]  # No attention
+    num_head_channels: 8
+    num_res_blocks: 1
+
+  scheduler:
+    type: "DDIM"
+    num_train_timesteps: 100  # Much fewer timesteps
+    schedule: "scaled_linear_beta"
+    beta_start: 0.0015
+    beta_end: 0.0195
+    clip_sample: False
+
+  conditioning:
+    use_classifier_free_guidance: False  # Disable for speed
+    guidance_scale: 1.0
+    unconditional_prob: 0.0
+
+training:
+  num_epochs: 1  # Just 1 epoch
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  optimizer: "AdamW"
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: 1
+    eta_min: 1e-6
+
+  loss:
+    type: "MSE"
+
+  save_interval: 1
+  save_top_k: 1
+  monitor: "val_loss"
+
+  log_interval: 1
+  val_interval: 1
+
+  use_amp: False
+  gradient_clip_val: 1.0
+
+evaluation:
+  metrics:
+    - "PSNR"
+    - "SSIM"
+  num_samples: 1  # Just 1 sample
+  inference_steps: 5  # Very few inference steps
+
+paths:
+  checkpoint_dir: "checkpoints_cpu_tiny"
+  log_dir: "logs_cpu_tiny"
+  output_dir: "outputs_cpu_tiny"
+
+hardware:
+  device: "cpu"
+  num_gpus: 0
+  distributed: False
