@@ -8,13 +8,13 @@ experiment:
   seed: 42
 
 data:
-  root_dir: "/orcd/home/002/tomli/orcd/scratch/data/bci"
+  root_dir: "/orcd/home/002/tomli/orcd/scratch/data/virtual_staining_prepared"
   train_dir: "train"
   test_dir: "test"
-  he_subdir: "HE"
-  ihc_subdir: "IHC"
+  he_subdir: "unstained"
+  ihc_subdir: "stained"
   image_size: 256  # Start small for rapid iteration
-  batch_size: 8
+  batch_size: 4  # Smaller batch for small dataset
   num_workers: 4
   cache_rate: 1.0  # Cache entire dataset in RAM (MONAI feature)
 
@@ -57,13 +57,13 @@ model:
     unconditional_prob: 0.1  # 10% unconditional training
 
 training:
-  num_epochs: 100
+  num_epochs: 200  # More epochs for small dataset
   learning_rate: 1e-4
   weight_decay: 1e-5
   optimizer: "AdamW"
   lr_scheduler:
     type: "CosineAnnealingLR"
-    T_max: 100
+    T_max: 200
     eta_min: 1e-6
 
   # Loss
@@ -71,13 +71,13 @@ training:
     type: "MSE"  # On noise prediction
 
   # Checkpointing
-  save_interval: 5  # Save every 5 epochs
+  save_interval: 10  # Save every 10 epochs
   save_top_k: 3
   monitor: "val_loss"
 
   # Logging
-  log_interval: 50  # Log every 50 iterations
-  val_interval: 1  # Validate every epoch
+  log_interval: 5  # Log every 5 iterations (small dataset)
+  val_interval: 5  # Validate every 5 epochs
 
   # Mixed precision
   use_amp: True

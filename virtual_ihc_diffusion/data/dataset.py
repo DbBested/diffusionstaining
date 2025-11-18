@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+from PIL import Image
 from monai.data import CacheDataset, Dataset
 from monai.transforms import (
     Compose,
@@ -22,6 +23,9 @@ from monai.transforms import (
     Resized,
     ToTensord,
 )
+
+# Disable PIL decompression bomb protection for large medical images
+Image.MAX_IMAGE_PIXELS = None
 
 
 class HEtoIHCDataset:

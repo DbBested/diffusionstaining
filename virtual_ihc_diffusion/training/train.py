@@ -88,8 +88,8 @@ class Trainer:
 
     def _create_optimizer(self):
         """Create optimizer"""
-        lr = self.config["training"]["learning_rate"]
-        weight_decay = self.config["training"]["weight_decay"]
+        lr = float(self.config["training"]["learning_rate"])
+        weight_decay = float(self.config["training"]["weight_decay"])
 
         optimizer = optim.AdamW(
             self.model.parameters(),
@@ -106,8 +106,8 @@ class Trainer:
         if sched_type == "CosineAnnealingLR":
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
-                T_max=sched_config["T_max"],
-                eta_min=sched_config["eta_min"],
+                T_max=int(sched_config["T_max"]),
+                eta_min=float(sched_config["eta_min"]),
             )
         else:
             raise ValueError(f"Unknown scheduler type: {sched_type}")

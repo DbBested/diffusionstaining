@@ -1,0 +1,93 @@
+# Test Configuration - Quick validation run
+# Version: 0.1-test
+# Date: 2025-11-17
+
+experiment:
+  name: "virtual_ihc_test"
+  description: "Quick test run to validate code"
+  seed: 42
+
+data:
+  root_dir: "/orcd/home/002/tomli/orcd/scratch/data/virtual_staining_prepared"
+  train_dir: "train"
+  test_dir: "test"
+  he_subdir: "unstained"
+  ihc_subdir: "stained"
+  image_size: 128  # Smaller for faster testing
+  batch_size: 2
+  num_workers: 0  # Single thread for testing
+  cache_rate: 0.0  # No caching to avoid memory issues
+
+model:
+  type: "latent_diffusion"
+
+  autoencoder:
+    spatial_dims: 2
+    in_channels: 3
+    out_channels: 3
+    channels: [64, 128]  # Smaller model
+    latent_channels: 3
+    num_res_blocks: 1
+    attention_levels: [False, True]
+
+  unet:
+    spatial_dims: 2
+    in_channels: 6  # 3 (latent) + 3 (condition)
+    out_channels: 3
+    channels: [64, 128, 256]  # Smaller model
+    attention_levels: [False, True, True]
+    num_head_channels: 16
+    num_res_blocks: 1
+
+  scheduler:
+    type: "DDIM"
+    num_train_timesteps: 1000
+    schedule: "scaled_linear_beta"
+    beta_start: 0.0015
+    beta_end: 0.0195
+    clip_sample: False
+
+  conditioning:
+    use_classifier_free_guidance: True
+    guidance_scale: 5.0
+    unconditional_prob: 0.1
+
+training:
+  num_epochs: 3  # Just 3 epochs for testing
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  optimizer: "AdamW"
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: 3
+    eta_min: 1e-6
+
+  loss:
+    type: "MSE"
+
+  save_interval: 1
+  save_top_k: 2
+  monitor: "val_loss"
+
+  log_interval: 1
+  val_interval: 1
+
+  use_amp: False  # Disable AMP for CPU testing
+  gradient_clip_val: 1.0
+
+evaluation:
+  metrics:
+    - "PSNR"
+    - "SSIM"
+  num_samples: 3
+  inference_steps: 10  # Fewer steps for testing
+
+paths:
+  checkpoint_dir: "checkpoints_test"
+  log_dir: "logs_test"
+  output_dir: "outputs_test"
+
+hardware:
+  device: "cuda"
+  num_gpus: 1
+  distributed: False

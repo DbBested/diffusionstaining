@@ -1,9 +1,10 @@
 #!/bin/bash
-#SBATCH -p mit_normal_gpu          # GPU partition
+#SBATCH -p mit_preemptable         # Preemptable partition (lower priority, longer time)
 #SBATCH -n 8                       # Number of CPU cores
 #SBATCH --gres=gpu:1               # Request 1 GPU (any available)
-#SBATCH --mem=32G                  # Memory (reduced for small dataset)
-#SBATCH -t 06:00:00                # Time limit (6 hours)
+#SBATCH --mem=32G                  # Memory
+#SBATCH -t 12:00:00                # Time limit (12 hours)
+#SBATCH --requeue                  # Auto-requeue if preempted
 #SBATCH -J virtual_ihc_v0.1        # Job name
 #SBATCH -o logs/train_%j.out       # Standard output log
 #SBATCH -e logs/train_%j.err       # Standard error log
