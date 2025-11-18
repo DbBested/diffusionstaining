@@ -1,0 +1,6 @@
+Using device: cpu
+Model parameters: 11,118,467
+Found 63 paired images for train split
+Found 16 paired images for test split
+Train batches: 32, Val batches: 8
+Epoch 1/3:   0%|          | 0/32 [00:00<?, ?it/s]

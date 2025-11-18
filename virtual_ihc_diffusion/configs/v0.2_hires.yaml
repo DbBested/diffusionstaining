@@ -1,0 +1,93 @@
+# Version 0.2 - Higher Resolution
+# Date: 2025-11-17
+# Changes: Increase resolution to 512x512 for better detail
+
+experiment:
+  name: "virtual_ihc_v0.2"
+  description: "Higher resolution (512x512) for improved detail preservation"
+  seed: 42
+
+data:
+  root_dir: "/orcd/home/002/tomli/orcd/scratch/data/virtual_staining_prepared"
+  train_dir: "train"
+  test_dir: "test"
+  he_subdir: "unstained"
+  ihc_subdir: "stained"
+  image_size: 512  # Increased from 256
+  batch_size: 2    # Reduced due to higher resolution
+  num_workers: 4
+  cache_rate: 0.5  # Cache only 50% to save memory
+
+model:
+  type: "latent_diffusion"
+
+  autoencoder:
+    spatial_dims: 2
+    in_channels: 3
+    out_channels: 3
+    channels: [128, 256, 512, 512]  # Added extra layer
+    latent_channels: 4
+    num_res_blocks: 2
+    attention_levels: [False, False, True, True]
+
+  unet:
+    spatial_dims: 2
+    in_channels: 8
+    out_channels: 4
+    channels: [128, 256, 512, 512]
+    attention_levels: [False, True, True, True]
+    num_head_channels: 32
+    num_res_blocks: 2
+
+  scheduler:
+    type: "DDIM"
+    num_train_timesteps: 1000
+    schedule: "scaled_linear_beta"
+    beta_start: 0.0015
+    beta_end: 0.0195
+    clip_sample: False
+
+  conditioning:
+    use_classifier_free_guidance: True
+    guidance_scale: 7.5
+    unconditional_prob: 0.1
+
+training:
+  num_epochs: 150  # Fewer epochs due to longer training time
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  optimizer: "AdamW"
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: 150
+    eta_min: 1e-6
+
+  loss:
+    type: "MSE"
+
+  save_interval: 10
+  save_top_k: 3
+  monitor: "val_loss"
+
+  log_interval: 5
+  val_interval: 5
+
+  use_amp: True
+  gradient_clip_val: 1.0
+
+evaluation:
+  metrics:
+    - "PSNR"
+    - "SSIM"
+  num_samples: 10
+  inference_steps: 50
+
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  output_dir: "outputs"
+
+hardware:
+  device: "cuda"
+  num_gpus: 1
+  distributed: False
