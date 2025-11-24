@@ -260,7 +260,8 @@ class ConditionalLatentDiffusionModel(nn.Module):
                 noise_pred = noise_pred_cond
 
             # Denoise step
-            latent = self.scheduler.step(noise_pred, t, latent).prev_sample
+            step_output = self.scheduler.step(noise_pred, t, latent)
+            latent = step_output[0] if isinstance(step_output, tuple) else step_output.prev_sample
 
         # Decode latent to image
         ihc_images = self.decode(latent)

@@ -1,20 +1,19 @@
-# Baseline Configuration for Virtual IHC Staining
-# Version: 0.1
-# Date: 2025-11-17
+# Fast Training Configuration for Virtual IHC Staining
+# Version: 0.1-fast
+# Date: 2025-11-20
+# Optimizations: Less frequent validation, faster sampling, larger batch, fewer epochs
 
 experiment:
-  name: "virtual_ihc_v0.1"
-  description: "Baseline latent diffusion model for H&E to IHC translation"
+  name: "virtual_ihc_v0.2_fast"
+  description: "Fast training - reduced validation and sampling for quick iteration"
   seed: 42
 
 data:
   root_dir: /orcd/home/002/tomli/orcd/scratch/data/mist_her2/HER2_raw/HER2/TrainValAB
-  image_size: 256    # or 512 etc
-  batch_size: 4
-  num_workers: 4
+  image_size: 256
+  batch_size: 8
+  num_workers: 6
   cache_rate: 1.0
-  # he_subdir / ihc_subdir can be omitted for MIST
-
 model:
   type: "latent_diffusion"
 
@@ -51,30 +50,30 @@ model:
   conditioning:
     use_classifier_free_guidance: True
     guidance_scale: 7.5
-    unconditional_prob: 0.1  # 10% unconditional training
+    unconditional_prob: 0.1
 
 training:
-  num_epochs: 200  # More epochs for small dataset
+  num_epochs: 100  # Reduced from 200 for faster completion
   learning_rate: 1e-4
   weight_decay: 1e-5
   optimizer: "AdamW"
   lr_scheduler:
     type: "CosineAnnealingLR"
-    T_max: 200
+    T_max: 100  # Updated to match num_epochs
     eta_min: 1e-6
 
   # Loss
   loss:
-    type: "MSE"  # On noise prediction
+    type: "MSE"
 
   # Checkpointing
-  save_interval: 10  # Save every 10 epochs
+  save_interval: 20  # Save every 20 epochs (less frequent)
   save_top_k: 3
   monitor: "val_loss"
 
   # Logging
-  log_interval: 5  # Log every 5 iterations (small dataset)
-  val_interval: 5  # Validate every 5 epochs
+  log_interval: 5
+  val_interval: 20  # Validate every 20 epochs (4x less frequent!)
 
   # Mixed precision
   use_amp: True
@@ -86,8 +85,8 @@ evaluation:
   metrics:
     - "PSNR"
     - "SSIM"
-  num_samples: 10  # Number of images to generate for visual inspection
-  inference_steps: 50  # DDIM sampling steps
+  num_samples: 4  # Reduced from 10 (2.5x fewer samples)
+  inference_steps: 10  # Reduced from 50 (5x faster!)
 
 paths:
   checkpoint_dir: "checkpoints"

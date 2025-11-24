@@ -32,6 +32,9 @@ class Trainer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
 
+        # loss weights
+        self.lambda_recon = float(self.config["training"].get("lambda_recon", 1.0))
+
         # Set random seed
         self.set_seed(config["experiment"]["seed"])
 
@@ -40,7 +43,10 @@ class Trainer:
 
         # Create model
         self.model = ConditionalLatentDiffusionModel(config).to(self.device)
-        print(f"Model parameters: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}")
+        print(
+            f"Model parameters: "
+            f"{sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}"
+        )
 
         # Create optimizer
         self.optimizer = self._create_optimizer()
@@ -51,12 +57,15 @@ class Trainer:
         # Create dataloaders
         self.train_loader = get_dataloader(config, split="train", shuffle=True)
         self.val_loader = get_dataloader(config, split="test", shuffle=False)
-        print(f"Train batches: {len(self.train_loader)}, Val batches: {len(self.val_loader)}")
+        print(
+            f"Train batches: {len(self.train_loader)}, "
+            f"Val batches: {len(self.val_loader)}"
+        )
 
         # Training state
         self.start_epoch = 0
         self.global_step = 0
-        self.best_val_loss = float('inf')
+        self.best_val_loss = float("inf")
 
         # Mixed precision
         self.use_amp = config["training"]["use_amp"]
@@ -114,11 +123,42 @@ class Trainer:
 
         return scheduler
 
+    def _compute_losses(self, ihc_images, he_images):
+        """
+        Compute diffusion noise loss and autoencoder reconstruction loss.
+        Returns total_loss, diffusion_loss, recon_loss
+        """
+        # diffusion noise prediction loss
+        noise_pred, noise_target = self.model(ihc_images, he_images)
+        diffusion_loss = nn.functional.mse_loss(noise_pred, noise_target)
+
+        # autoencoder reconstruction loss on both ihc and he
+        # use the same encode/decode path as in the model
+        ihc_latent = self.model.encode(ihc_images)
+        ihc_recon = self.model.decode(ihc_latent)
+
+        he_latent = self.model.encode(he_images)
+        he_recon = self.model.decode(he_latent)
+
+        # L1 reconstruction loss works well for images
+        recon_loss_ihc = nn.functional.l1_loss(ihc_recon, ihc_images)
+        recon_loss_he = nn.functional.l1_loss(he_recon, he_images)
+        recon_loss = recon_loss_ihc + recon_loss_he
+
+        total_loss = diffusion_loss + self.lambda_recon * recon_loss
+        return total_loss, diffusion_loss, recon_loss
+
     def train_epoch(self, epoch: int):
         """Train for one epoch"""
         self.model.train()
-        total_loss = 0
-        pbar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.config['training']['num_epochs']}")
+        total_loss = 0.0
+        total_diff = 0.0
+        total_recon = 0.0
+
+        pbar = tqdm(
+            self.train_loader,
+            desc=f"Epoch {epoch+1}/{self.config['training']['num_epochs']}",
+        )
 
         for batch_idx, batch in enumerate(pbar):
             he_images = batch["he"].to(self.device)
@@ -129,8 +169,9 @@ class Trainer:
             # Forward pass with mixed precision
             if self.use_amp:
                 with autocast():
-                    noise_pred, noise_target = self.model(ihc_images, he_images)
-                    loss = nn.functional.mse_loss(noise_pred, noise_target)
+                    loss, diff_loss, recon_loss = self._compute_losses(
+                        ihc_images, he_images
+                    )
 
                 self.scaler.scale(loss).backward()
 
@@ -139,35 +180,56 @@ class Trainer:
                     self.scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(
                         self.model.parameters(),
-                        self.config["training"]["gradient_clip_val"]
+                        self.config["training"]["gradient_clip_val"],
                     )
 
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                noise_pred, noise_target = self.model(ihc_images, he_images)
-                loss = nn.functional.mse_loss(noise_pred, noise_target)
+                loss, diff_loss, recon_loss = self._compute_losses(
+                    ihc_images, he_images
+                )
                 loss.backward()
 
                 # Gradient clipping
                 if "gradient_clip_val" in self.config["training"]:
                     torch.nn.utils.clip_grad_norm_(
                         self.model.parameters(),
-                        self.config["training"]["gradient_clip_val"]
+                        self.config["training"]["gradient_clip_val"],
                     )
 
                 self.optimizer.step()
 
             # Update metrics
             total_loss += loss.item()
+            total_diff += diff_loss.item()
+            total_recon += recon_loss.item()
             self.global_step += 1
 
             # Logging
             if batch_idx % self.config["training"]["log_interval"] == 0:
                 avg_loss = total_loss / (batch_idx + 1)
-                pbar.set_postfix({"loss": f"{avg_loss:.4f}"})
+                avg_diff = total_diff / (batch_idx + 1)
+                avg_recon = total_recon / (batch_idx + 1)
+                pbar.set_postfix(
+                    {
+                        "loss": f"{avg_loss:.4f}",
+                        "diff": f"{avg_diff:.4f}",
+                        "recon": f"{avg_recon:.4f}",
+                    }
+                )
                 self.writer.add_scalar("train/loss", loss.item(), self.global_step)
-                self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]["lr"], self.global_step)
+                self.writer.add_scalar(
+                    "train/diffusion_loss", diff_loss.item(), self.global_step
+                )
+                self.writer.add_scalar(
+                    "train/recon_loss", recon_loss.item(), self.global_step
+                )
+                self.writer.add_scalar(
+                    "train/lr",
+                    self.optimizer.param_groups[0]["lr"],
+                    self.global_step,
+                )
 
         return total_loss / len(self.train_loader)
 
@@ -175,21 +237,27 @@ class Trainer:
     def validate(self, epoch: int):
         """Validate model"""
         self.model.eval()
-        total_loss = 0
+        total_loss = 0.0
+        total_diff = 0.0
+        total_recon = 0.0
+
         metrics_tracker = MetricsTracker(metrics=self.config["evaluation"]["metrics"])
 
         # Sample images for visualization
-        num_samples = min(self.config["evaluation"]["num_samples"], len(self.val_loader))
+        num_samples = min(
+            self.config["evaluation"]["num_samples"], len(self.val_loader)
+        )
         sample_idx = 0
 
         for batch_idx, batch in enumerate(tqdm(self.val_loader, desc="Validating")):
             he_images = batch["he"].to(self.device)
             ihc_images = batch["ihc"].to(self.device)
 
-            # Compute validation loss
-            noise_pred, noise_target = self.model(ihc_images, he_images)
-            loss = nn.functional.mse_loss(noise_pred, noise_target)
+            loss, diff_loss, recon_loss = self._compute_losses(ihc_images, he_images)
+
             total_loss += loss.item()
+            total_diff += diff_loss.item()
+            total_recon += recon_loss.item()
 
             # Generate samples
             if batch_idx < num_samples:
@@ -214,14 +282,22 @@ class Trainer:
 
         # Compute average metrics
         avg_loss = total_loss / len(self.val_loader)
+        avg_diff = total_diff / len(self.val_loader)
+        avg_recon = total_recon / len(self.val_loader)
         metrics = metrics_tracker.compute()
 
         # Log metrics
         self.writer.add_scalar("val/loss", avg_loss, epoch)
+        self.writer.add_scalar("val/diffusion_loss", avg_diff, epoch)
+        self.writer.add_scalar("val/recon_loss", avg_recon, epoch)
         for metric_name, metric_value in metrics.items():
             self.writer.add_scalar(f"val/{metric_name}", metric_value, epoch)
 
-        print(f"Validation - Loss: {avg_loss:.4f}, {metrics_tracker.get_string()}")
+        print(
+            f"Validation  Loss: {avg_loss:.4f}, "
+            f"Diff: {avg_diff:.4f}, Recon: {avg_recon:.4f}, "
+            f"{metrics_tracker.get_string()}"
+        )
 
         return avg_loss, metrics
 
@@ -264,11 +340,11 @@ class Trainer:
             torch.save(checkpoint, best_path)
             print(f"Saved best checkpoint: {best_path}")
 
-        # Keep only top-k checkpoints
+        # Keep only top k checkpoints
         self._cleanup_checkpoints()
 
     def _cleanup_checkpoints(self):
-        """Keep only top-k checkpoints"""
+        """Keep only top k checkpoints"""
         top_k = self.config["training"]["save_top_k"]
         checkpoints = sorted(self.checkpoint_dir.glob("checkpoint_epoch_*.pth"))
 
@@ -297,7 +373,7 @@ class Trainer:
         for epoch in range(self.start_epoch, num_epochs):
             # Train
             train_loss = self.train_epoch(epoch)
-            print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {train_loss:.4f}")
+            print(f"Epoch {epoch+1}/{num_epochs}  Train Loss: {train_loss:.4f}")
 
             # Validate
             if (epoch + 1) % self.config["training"]["val_interval"] == 0:
@@ -308,20 +384,32 @@ class Trainer:
                 if is_best:
                     self.best_val_loss = val_loss
 
-                if (epoch + 1) % self.config["training"]["save_interval"] == 0 or is_best:
+                if (
+                    (epoch + 1) % self.config["training"]["save_interval"] == 0
+                    or is_best
+                ):
                     self.save_checkpoint(epoch, val_loss, is_best)
 
             # Step LR scheduler
             self.lr_scheduler.step()
 
-        print("Training complete!")
+        print("Training complete")
         self.writer.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Virtual IHC Diffusion Model")
-    parser.add_argument("--config", type=str, required=True, help="Path to config file")
-    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
+    parser = argparse.ArgumentParser(
+        description="Train Virtual IHC Diffusion Model"
+    )
+    parser.add_argument(
+        "--config", type=str, required=True, help="Path to config file"
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to checkpoint to resume from",
+    )
     args = parser.parse_args()
 
     # Load config

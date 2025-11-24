@@ -1,11 +1,25 @@
 """
 H&E to IHC Dataset with MONAI Transforms
 Supports paired histopathology images for diffusion model training
+
+Now supports the MIST HER2 layout:
+
+  /path/to/TrainValAB/
+    trainA  (H&E)
+    trainB  (IHC, e.g. HER2)
+    valA
+    valB
+
+Usage for MIST:
+  root_dir = "/orcd/home/002/tomli/orcd/scratch/data/mist_her2/HER2_raw/HER2/TrainValAB"
+  split = "train"  -> uses trainA / trainB
+  split = "val"    -> uses valA / valB
+  split = "test"   -> also uses valA / valB
 """
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 import numpy as np
 import torch
@@ -30,16 +44,25 @@ Image.MAX_IMAGE_PIXELS = None
 
 class HEtoIHCDataset:
     """
-    Dataset wrapper for H&E to IHC paired images
+    Dataset wrapper for H&E to IHC paired images.
 
-    Args:
-        root_dir: Root directory containing train/test folders
-        split: 'train' or 'test'
-        he_subdir: Subdirectory name for H&E images
-        ihc_subdir: Subdirectory name for IHC images
-        image_size: Target image size (assumes square images)
-        cache_rate: Fraction of data to cache in RAM (0.0-1.0)
-        augmentation: Whether to apply data augmentation
+    Supports two directory layouts:
+
+    1) MIST TrainValAB layout
+       root_dir/
+         trainA  (H&E)
+         trainB  (IHC)
+         valA
+         valB
+
+    2) Classic layout
+       root_dir/
+         train/
+           HE/
+           IHC/
+         test/
+           HE/
+           IHC/
     """
 
     def __init__(
@@ -58,9 +81,30 @@ class HEtoIHCDataset:
         self.cache_rate = cache_rate
         self.augmentation = augmentation and (split == "train")
 
-        # Construct paths
-        self.he_dir = self.root_dir / split / he_subdir
-        self.ihc_dir = self.root_dir / split / ihc_subdir
+        # Detect MIST TrainValAB layout
+        self.use_mist_layout = (
+            (self.root_dir / "trainA").exists()
+            and (self.root_dir / "trainB").exists()
+        )
+
+        if self.use_mist_layout:
+            # MIST HER2 layout
+            if split == "train":
+                self.he_dir = self.root_dir / "trainA"
+                self.ihc_dir = self.root_dir / "trainB"
+            elif split in ("val", "test"):
+                self.he_dir = self.root_dir / "valA"
+                self.ihc_dir = self.root_dir / "valB"
+            else:
+                raise ValueError(
+                    f"Unsupported split '{split}' for MIST layout. Use 'train', 'val', or 'test'."
+                )
+            print(f"Using MIST TrainValAB layout. split={split}")
+        else:
+            # Classic layout: root_dir/split/HE and root_dir/split/IHC
+            self.he_dir = self.root_dir / split / he_subdir
+            self.ihc_dir = self.root_dir / split / ihc_subdir
+            print(f"Using classic layout. split={split}, he_dir={self.he_dir}, ihc_dir={self.ihc_dir}")
 
         # Validate directories
         if not self.he_dir.exists():
@@ -90,25 +134,28 @@ class HEtoIHCDataset:
 
     def _build_data_list(self) -> List[Dict[str, str]]:
         """
-        Build list of paired images
-        Assumes corresponding filenames between H&E and IHC directories
+        Build list of paired images.
+        Assumes corresponding filenames between H&E and IHC directories.
         """
-        he_files = sorted(self.he_dir.glob("*.png")) + sorted(self.he_dir.glob("*.jpg"))
-        data_dicts = []
+        he_files = sorted(self.he_dir.glob("*.png")) + sorted(self.he_dir.glob("*.jpg")) + sorted(
+            self.he_dir.glob("*.jpeg")
+        ) + sorted(self.he_dir.glob("*.tif")) + sorted(self.he_dir.glob("*.tiff"))
+
+        data_dicts: List[Dict[str, str]] = []
 
         for he_file in he_files:
-            # Find corresponding IHC file
-            ihc_file = self.ihc_dir / he_file.name
+            stem = he_file.stem
 
-            # Also try with different extensions
-            if not ihc_file.exists():
-                stem = he_file.stem
-                for ext in ['.png', '.jpg', '.jpeg', '.tif', '.tiff']:
-                    ihc_file = self.ihc_dir / f"{stem}{ext}"
-                    if ihc_file.exists():
-                        break
+            # Try matching by same filename with common extensions
+            candidate_exts = [he_file.suffix] + [".png", ".jpg", ".jpeg", ".tif", ".tiff"]
+            ihc_file = None
+            for ext in candidate_exts:
+                candidate = self.ihc_dir / f"{stem}{ext}"
+                if candidate.exists():
+                    ihc_file = candidate
+                    break
 
-            if ihc_file.exists():
+            if ihc_file is not None:
                 data_dicts.append({
                     "he": str(he_file),
                     "ihc": str(ihc_file),
@@ -124,7 +171,7 @@ class HEtoIHCDataset:
 
     def _get_transforms(self) -> Compose:
         """
-        Create MONAI transform pipeline
+        Create MONAI transform pipeline.
         """
         keys = ["he", "ihc"]
 
@@ -132,7 +179,7 @@ class HEtoIHCDataset:
         base_transforms = [
             LoadImaged(keys=keys, image_only=True),
             EnsureChannelFirstd(keys=keys),
-            ScaleIntensityd(keys=keys, minv=-1.0, maxv=1.0),  # Scale to [-1, 1]
+            ScaleIntensityd(keys=keys, minv=-1.0, maxv=1.0),  # scale to [-1, 1]
             Resized(keys=keys, spatial_size=(self.image_size, self.image_size)),
         ]
 
@@ -184,31 +231,33 @@ def get_dataloader(
     shuffle: bool = True,
 ) -> torch.utils.data.DataLoader:
     """
-    Create DataLoader for H&E to IHC dataset
+    Create DataLoader for H&E to IHC dataset.
 
     Args:
         config: Configuration dictionary
-        split: 'train' or 'test'
+        split: 'train', 'val', or 'test'
         shuffle: Whether to shuffle data
 
     Returns:
         DataLoader instance
     """
+    data_cfg = config["data"]
+
     dataset = HEtoIHCDataset(
-        root_dir=config["data"]["root_dir"],
+        root_dir=data_cfg["root_dir"],
         split=split,
-        he_subdir=config["data"]["he_subdir"],
-        ihc_subdir=config["data"]["ihc_subdir"],
-        image_size=config["data"]["image_size"],
-        cache_rate=config["data"]["cache_rate"] if split == "train" else 0.0,
+        he_subdir=data_cfg.get("he_subdir", "HE"),     # ignored for MIST layout
+        ihc_subdir=data_cfg.get("ihc_subdir", "IHC"),  # ignored for MIST layout
+        image_size=data_cfg["image_size"],
+        cache_rate=data_cfg["cache_rate"] if split == "train" else 0.0,
         augmentation=(split == "train"),
     )
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=config["data"]["batch_size"],
+        batch_size=data_cfg["batch_size"],
         shuffle=shuffle,
-        num_workers=config["data"]["num_workers"],
+        num_workers=data_cfg["num_workers"],
         pin_memory=True,
     )
 
@@ -216,7 +265,7 @@ def get_dataloader(
 
 
 if __name__ == "__main__":
-    # Test dataset loading
+    # Simple test
     import yaml
 
     with open("../configs/baseline.yaml", "r") as f:
