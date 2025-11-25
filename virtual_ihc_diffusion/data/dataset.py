@@ -23,6 +23,7 @@ from typing import Dict, List
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader, Subset
 from PIL import Image
 from monai.data import CacheDataset, Dataset
 from monai.transforms import (
@@ -253,7 +254,20 @@ def get_dataloader(
         augmentation=(split == "train"),
     )
 
-    dataloader = torch.utils.data.DataLoader(
+    # NEW: optionally limit dataset size from config
+    if split == "train":
+        max_samples = data_cfg.get("max_train_samples")
+    else:
+        max_samples = data_cfg.get("max_val_samples")
+
+    if max_samples is not None:
+        max_samples = min(max_samples, len(dataset))
+        if max_samples < len(dataset):
+            # random subset, seeded by Trainer.set_seed for reproducibility
+            indices = torch.randperm(len(dataset))[:max_samples]
+            dataset = Subset(dataset, indices)
+
+    dataloader = DataLoader(
         dataset,
         batch_size=data_cfg["batch_size"],
         shuffle=shuffle,

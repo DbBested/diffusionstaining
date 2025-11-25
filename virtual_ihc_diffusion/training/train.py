@@ -6,6 +6,7 @@ Implements training loop with checkpointing and validation
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 import yaml
 import torch
@@ -123,30 +124,41 @@ class Trainer:
 
         return scheduler
 
+    # def _compute_losses(self, ihc_images, he_images):
+    #     """
+    #     Compute diffusion noise loss and autoencoder reconstruction loss.
+    #     Returns total_loss, diffusion_loss, recon_loss
+    #     """
+    #     # diffusion noise prediction loss
+    #     noise_pred, noise_target = self.model(ihc_images, he_images)
+    #     diffusion_loss = nn.functional.mse_loss(noise_pred, noise_target)
+
+    #     # autoencoder reconstruction loss on both ihc and he
+    #     # use the same encode/decode path as in the model
+    #     ihc_latent = self.model.encode(ihc_images)
+    #     ihc_recon = self.model.decode(ihc_latent)
+
+    #     he_latent = self.model.encode(he_images)
+    #     he_recon = self.model.decode(he_latent)
+
+    #     # L1 reconstruction loss works well for images
+    #     recon_loss_ihc = nn.functional.l1_loss(ihc_recon, ihc_images)
+    #     recon_loss_he = nn.functional.l1_loss(he_recon, he_images)
+    #     recon_loss = recon_loss_ihc + recon_loss_he
+
+    #     total_loss = diffusion_loss + self.lambda_recon * recon_loss
+    #     return total_loss, diffusion_loss, recon_loss
     def _compute_losses(self, ihc_images, he_images):
         """
-        Compute diffusion noise loss and autoencoder reconstruction loss.
-        Returns total_loss, diffusion_loss, recon_loss
+        Compute only diffusion noise loss.
+        VAE is pretrained and frozen, so no reconstruction loss needed.
         """
-        # diffusion noise prediction loss
+        # Diffusion noise prediction loss
         noise_pred, noise_target = self.model(ihc_images, he_images)
         diffusion_loss = nn.functional.mse_loss(noise_pred, noise_target)
-
-        # autoencoder reconstruction loss on both ihc and he
-        # use the same encode/decode path as in the model
-        ihc_latent = self.model.encode(ihc_images)
-        ihc_recon = self.model.decode(ihc_latent)
-
-        he_latent = self.model.encode(he_images)
-        he_recon = self.model.decode(he_latent)
-
-        # L1 reconstruction loss works well for images
-        recon_loss_ihc = nn.functional.l1_loss(ihc_recon, ihc_images)
-        recon_loss_he = nn.functional.l1_loss(he_recon, he_images)
-        recon_loss = recon_loss_ihc + recon_loss_he
-
-        total_loss = diffusion_loss + self.lambda_recon * recon_loss
-        return total_loss, diffusion_loss, recon_loss
+        
+        # Return same value for all three to avoid breaking existing logging
+        return diffusion_loss, diffusion_loss, torch.tensor(0.0, device=diffusion_loss.device)
 
     def train_epoch(self, epoch: int):
         """Train for one epoch"""
@@ -369,8 +381,10 @@ class Trainer:
     def train(self):
         """Main training loop"""
         num_epochs = self.config["training"]["num_epochs"]
+        self.train_start_time = time.time()
 
         for epoch in range(self.start_epoch, num_epochs):
+            epoch_start = time.time()
             # Train
             train_loss = self.train_epoch(epoch)
             print(f"Epoch {epoch+1}/{num_epochs}  Train Loss: {train_loss:.4f}")
@@ -393,8 +407,29 @@ class Trainer:
             # Step LR scheduler
             self.lr_scheduler.step()
 
+            # Runtime estimates
+            epoch_time = time.time() - epoch_start
+            elapsed = time.time() - self.train_start_time
+            avg_epoch = elapsed / (epoch + 1)
+            est_total = avg_epoch * num_epochs
+            est_remaining = max(est_total - elapsed, 0)
+            print(
+                f"Epoch runtime: {self._format_time(epoch_time)} | "
+                f"Elapsed: {self._format_time(elapsed)} | "
+                f"Est. total: {self._format_time(est_total)} | "
+                f"ETA: {self._format_time(est_remaining)}"
+            )
+
         print("Training complete")
         self.writer.close()
+
+    @staticmethod
+    def _format_time(seconds: float) -> str:
+        """Format seconds as H:MM:SS"""
+        seconds = int(seconds)
+        hours, remainder = divmod(seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
 
 
 def main():

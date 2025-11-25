@@ -1,0 +1,103 @@
+# Fast Training Configuration for Virtual IHC Staining
+# Version: 0.1-fast
+# Date: 2025-11-20
+# Optimizations: Less frequent validation, faster sampling, larger batch, fewer epochs
+
+experiment:
+  name: "virtual_ihc_v0.2_fast"
+  description: "Fast training - reduced validation and sampling for quick iteration"
+  seed: 42
+
+data:
+  root_dir: /orcd/home/002/tomli/orcd/scratch/data/mist_her2/HER2_raw/HER2/TrainValAB
+  image_size: 256
+  batch_size: 8
+  num_workers: 6
+  cache_rate: 1.0
+
+  max_train_samples: 1000   # use only 2k pairs for training
+  max_val_samples: 200   
+
+
+model:
+  type: "latent_diffusion"
+
+  # VAE/AutoencoderKL
+  autoencoder:
+    spatial_dims: 2
+    in_channels: 3
+    out_channels: 3
+    channels: [32, 64, 128]  # Must match what you used in VAE pretraining!
+    latent_channels: 3  # Must match what you used in VAE pretraining!
+    num_res_blocks: 1
+    attention_levels: [False, False, True]
+
+  unet:
+    spatial_dims: 2
+    in_channels: 6  # 2 * latent_channels (3 + 3)
+    out_channels: 3  # Same as latent_channels
+    channels: [32, 64, 128]
+    attention_levels: [False, False, True]
+    num_head_channels: 8
+    num_res_blocks: 1
+
+  # Diffusion scheduler
+  scheduler:
+    type: "DDIM"
+    num_train_timesteps: 1000
+    schedule: "scaled_linear_beta"
+    beta_start: 0.0015
+    beta_end: 0.0195
+    clip_sample: False
+
+  # Conditioning
+  conditioning:
+    use_classifier_free_guidance: True
+    guidance_scale: 7.5
+    unconditional_prob: 0.1
+
+training:
+  num_epochs: 20  # Reduced from 200 for faster completion
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  optimizer: "AdamW"
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: 20  # Updated to match num_epochs
+    eta_min: 1e-6
+
+  # Loss
+  loss:
+    type: "MSE"
+
+  # Checkpointing
+  save_interval: 5  # Save every 20 epochs (less frequent)
+  save_top_k: 3
+  monitor: "val_loss"
+
+  # Logging
+  log_interval: 1
+  val_interval: 2  # Validate every 20 epochs (4x less frequent!)
+
+  # Mixed precision
+  use_amp: True
+
+  # Gradient clipping
+  gradient_clip_val: 1.0
+
+evaluation:
+  metrics:
+    - "PSNR"
+    - "SSIM"
+  num_samples: 2  # Reduced from 10 (2.5x fewer samples)
+  inference_steps: 25  # Reduced from 50 (5x faster!)
+
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  output_dir: "outputs"
+
+hardware:
+  device: "cuda"
+  num_gpus: 1
+  distributed: False

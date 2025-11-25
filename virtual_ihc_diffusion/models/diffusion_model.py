@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 from monai.networks.nets import AutoencoderKL, DiffusionModelUNet
 from monai.networks.schedulers import DDIMScheduler, DDPMScheduler
+from pathlib import Path
+
 
 
 class ConditionalLatentDiffusionModel(nn.Module):
@@ -27,6 +29,21 @@ class ConditionalLatentDiffusionModel(nn.Module):
 
         # Build autoencoder (VAE)
         self.autoencoder = self._build_autoencoder()
+
+        # ✓ ADD THIS: Load pretrained VAE weights
+        # vae_checkpoint_path = Path("checkpoints/vae_pretrain/vae_best.pth")
+        # if vae_checkpoint_path.exists():
+        #     print(f"Loading pretrained VAE from {vae_checkpoint_path}")
+        #     checkpoint = torch.load(vae_checkpoint_path, map_location='cpu')
+        #     self.autoencoder.load_state_dict(checkpoint['model_state_dict'])
+        #     print("✓ Pretrained VAE loaded successfully")
+            
+        #     # Print the final training loss to verify quality
+        #     if 'val_loss' in checkpoint:
+        #         print(f"  VAE validation loss: {checkpoint['val_loss']:.4f}")
+        # else:
+        #     print("⚠ WARNING: No pretrained VAE found! Training from scratch.")
+        #     print(f"  Expected location: {vae_checkpoint_path}")
 
         # Build diffusion UNet
         self.unet = self._build_unet()

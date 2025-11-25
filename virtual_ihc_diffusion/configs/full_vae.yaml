@@ -1,0 +1,96 @@
+# configs/vae_medium_v2.yaml
+# Optimized VAE with Gradient Checkpointing - fits in 44GB GPU
+
+experiment:
+  name: "vae_medium_v2"
+  description: "Medium VAE - 6 latent channels, 3 levels, with gradient checkpointing"
+  seed: 42
+
+data:
+  root_dir: /orcd/home/002/tomli/orcd/scratch/data/mist_her2/HER2_raw/HER2/TrainValAB
+  image_size: 256
+  batch_size: 4                      # REDUCED from 4 (for memory safety)
+  num_workers: 4                     # REDUCED from 8 (more stable)
+  cache_rate: 1.0                    # Keep at 1.0 (caches in RAM, not GPU)
+  persistent_workers: true
+  prefetch_factor: 2
+  max_train_samples: null
+  max_val_samples: null
+
+model:
+  type: "latent_diffusion"
+
+  autoencoder:
+    spatial_dims: 2
+    in_channels: 3
+    out_channels: 3
+    channels: [64, 128, 256]         # 3 levels - GOOD
+    latent_channels: 6               # 6 channels - GOOD (2x better than 3)
+    num_res_blocks: 2
+    attention_levels: [False, True, False]  # CHANGED: Only middle layer attention (saves 8-12GB)
+
+  unet:
+    spatial_dims: 2
+    in_channels: 12
+    out_channels: 6
+    channels: [128, 256, 512, 512]
+    attention_levels: [False, True, True, True]
+    num_head_channels: 32
+    num_res_blocks: 2
+
+  scheduler:
+    type: "DDIM"
+    num_train_timesteps: 1000
+    schedule: "scaled_linear_beta"
+    beta_start: 0.0015
+    beta_end: 0.0195
+    clip_sample: False
+
+  conditioning:
+    use_classifier_free_guidance: True
+    guidance_scale: 7.5
+    unconditional_prob: 0.1
+
+training:
+  num_epochs: 100                    # INCREASED from 80 (more epochs with smaller batches)
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  optimizer: "AdamW"
+  
+  # Gradient checkpointing is handled by the script, not config
+  # Just use smaller batch size + gradient accumulation
+  
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: 100                       # Match num_epochs
+    eta_min: 1e-6
+
+  loss:
+    type: "L1"
+
+  save_interval: 10
+  save_top_k: 5
+  monitor: "val_loss"
+
+  log_interval: 10
+  val_interval: 2
+
+  use_amp: True                      # Keep mixed precision
+  gradient_clip_val: 1.0
+
+evaluation:
+  metrics:
+    - "PSNR"
+    - "SSIM"
+  num_samples: 4
+  inference_steps: 50
+
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  output_dir: "outputs"
+
+hardware:
+  device: "cuda"
+  num_gpus: 1
+  distributed: False
