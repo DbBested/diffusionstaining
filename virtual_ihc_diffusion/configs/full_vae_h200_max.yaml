@@ -1,0 +1,90 @@
+# configs/full_vae_h200_max.yaml
+experiment:
+  name: "vae_h200_ultra"
+  description: "Ultra-large VAE - Maximum capacity for H200"
+  seed: 42
+
+data:
+  root_dir: /orcd/home/002/tomli/orcd/scratch/data/mist_her2/HER2_raw/HER2/TrainValAB
+  image_size: 256
+  batch_size: 96              # May need to reduce to 64-96 for ultra model
+  num_workers: 2
+  cache_rate: 0.0              # Don't cache for faster startup
+  persistent_workers: true
+  prefetch_factor: 2
+
+model:
+  type: "latent_diffusion"
+
+  autoencoder:
+    spatial_dims: 2
+    in_channels: 3
+    out_channels: 3
+    channels: [128, 256, 512, 1024]     # WIDER (2x current)
+    latent_channels: 24                  # LARGER latent (2x current)
+    num_res_blocks: 3                    # MORE blocks (was 3)
+    attention_levels: [false, false, true, true]  # MORE attention
+
+  # Scale up U-Net accordingly
+  unet:
+    spatial_dims: 2
+    in_channels: 64                      # 32 latent * 2
+    out_channels: 32
+    channels: [256, 512, 1024, 1536]     # Larger U-Net
+    attention_levels: [false, true, true, true]
+    num_head_channels: 64
+    num_res_blocks: 3
+
+  scheduler:
+    type: "DDIM"
+    num_train_timesteps: 1000
+    schedule: "scaled_linear_beta"
+    beta_start: 0.0015
+    beta_end: 0.0195
+    clip_sample: False
+
+  conditioning:
+    use_classifier_free_guidance: True
+    guidance_scale: 7.5
+    unconditional_prob: 0.1
+
+training:
+  num_epochs: 50
+  learning_rate: 0.0001 
+  weight_decay: 0.00001
+  optimizer: "AdamW"
+  
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: 50
+    eta_min: 0.000001
+
+  loss:
+    type: "L1"
+
+  save_interval: 5
+  save_top_k: 5
+  monitor: "val_loss"
+
+  log_interval: 5
+  val_interval: 5
+
+  use_amp: True
+  gradient_clip_val: 0.5
+
+evaluation:
+  metrics:
+    - "PSNR"
+    - "SSIM"
+  num_samples: 16
+  inference_steps: 50
+
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  output_dir: "outputs"
+
+hardware:
+  device: "cuda"
+  num_gpus: 8                        # 8x H200!
+  distributed: True

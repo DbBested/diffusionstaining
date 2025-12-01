@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH -p mit_preemptable
+#SBATCH -p pg_tata  
 #SBATCH -n 8
-#SBATCH --gres=gpu:1
-#SBATCH --mem=32G
+#SBATCH --gres=gpu:h200:1
+#SBATCH --mem=64G
 #SBATCH -t 6:00:00
 #SBATCH -J virtual_ihc_fast
 #SBATCH -o logs/vae_pretrain_%j.out  
